@@ -1,2 +1,4 @@
+* Present file info in label below file list
 
-* Change DirCacheEntry to ListStore and attach it to TreeView.
+* Copying files between panels
+
