@@ -14,6 +14,7 @@ import gnome.ui
 
 import profile
 
+import time
 
 LEFT = 0
 RIGHT = 1
@@ -178,6 +179,47 @@ class Panel:
     def on_tv_cursor_changed(self, widget):
         (self.curr_path, column) = self.tv.get_cursor()
         self.curr_iter = self.model.get_iter(self.curr_path)
+        fi = self.model.get_value(self.curr_iter, 0)
+
+        #name
+        name = "<b>"+fi.name+"</b>"
+        #determine permissions
+        perm = ["-", "-","-","-", "-","-","-", "-","-","-"]
+        if fi.permissions & gnome.vfs.PERM_USER_READ:
+            perm[1] = "r"
+        if fi.permissions & gnome.vfs.PERM_USER_WRITE:
+            perm[2] = "w"
+        if fi.permissions & gnome.vfs.PERM_USER_EXEC:
+            perm[3] = "x"
+        if fi.permissions & gnome.vfs.PERM_GROUP_READ:
+            perm[4] = "r"
+        if fi.permissions & gnome.vfs.PERM_GROUP_WRITE:
+            perm[5] = "w"
+        if fi.permissions & gnome.vfs.PERM_GROUP_EXEC:
+            perm[6] = "x"
+        if fi.permissions & gnome.vfs.PERM_OTHER_READ:
+            perm[7] = "r"
+        if fi.permissions & gnome.vfs.PERM_OTHER_WRITE:
+            perm[8] = "w"
+        if fi.permissions & gnome.vfs.PERM_OTHER_EXEC:
+            perm[9] = "x"
+        perm = "".join(perm)
+
+        #determine size
+        if fi.size < 1024:
+            size = str(fi.size)+"B"
+        elif fi.size < 1024*1024:
+            size = str(fi.size/1024)+"kB"
+        elif fi.size < 1024*1024*1024:
+            size = str(fi.size/1024/1024)+"MB"
+        else:
+            size = str(fi.size/1024/1024/1024)+"GB"
+            pass
+
+        #determine modification time
+        t = time.strftime("%b %d %H:%M", time.gmtime(fi.mtime))
+        sep = "  <span foreground='blue' weight='bold'>/</span>  "
+        self.lbl.set_markup(name + sep + t + sep + size + sep + perm)
         pass
 
     def on_tv_row_activated(self, treeview, path, view_column):
@@ -190,21 +232,6 @@ class Panel:
 
     def on_cmb_activate(self, widget):
         self.__chdir_to()
-        pass
-
-    def __set_cursor(self, key):
-        i = self.curr_path[0]
-        if key == gtk.gdk.keyval_from_name("Up"):
-            i = i - 1
-            if i < 0:
-                i = 0
-                pass
-            pass
-        elif key == gtk.gdk.keyval_from_name("Down"):
-            i = i + 1
-            pass
-        self.curr_path = str(i)
-        self.tv.set_cursor(self.curr_path)
         pass
 
     def __load_list(self, dir_uri):
