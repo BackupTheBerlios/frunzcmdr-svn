@@ -47,31 +47,58 @@ class stock_list(gtk.TreeView):
         col = gtk.TreeViewColumn('Stock Item', cell, text=1)
         self.append_column(col)
 
-class DirCacheEntry:
+class DirCacheEntry(gtk.ListStore):
     def __init__(self, uri):
         self.uri = uri
         self.path = "0"
-        self.dir_entries = []
+        gtk.ListStore.__init__(self,
+                               gobject.TYPE_PYOBJECT, # 0-fi
+                               gobject.TYPE_STRING,   # 1-name for displaying
+                               gobject.TYPE_STRING,   # 2-name for sorting
+                               gtk.gdk.Pixbuf,        # 3-icon
+                               'gboolean',            # 4-selected
+                               str)                   # 5-selection bg color
         pass
 
-    def add_dir_entry(self, fi):
+    def append(self, fi):
+        disp_name = fi.name.replace("&", "&amp;")
         if fi.type == gnome.vfs.FILE_TYPE_DIRECTORY:
-            name = "a" + fi.name
+            sort_name = "a" + fi.name
+            disp_name = "<b>/" + disp_name + "</b>"
         elif fi.type == gnome.vfs.FILE_TYPE_REGULAR:
-            name = "b" + fi.name
+            sort_name = "b" + fi.name
         elif fi.type == gnome.vfs.FILE_TYPE_SYMBOLIC_LINK:
-            name = "c" + fi.name
+            sort_name = "c" + fi.name
+            disp_name = "<b>~</b>" + disp_name
         elif fi.type == gnome.vfs.FILE_TYPE_FIFO:
-            name = "d" + fi.name
+            sort_name = "d" + fi.name
+            disp_name = "<b>|</b>" + disp_name
         elif fi.type == gnome.vfs.FILE_TYPE_SOCKET:
-            name = "e" + fi.name
+            sort_name = "e" + fi.name
+            disp_name = "<b>=</b>" + disp_name
         elif fi.type == gnome.vfs.FILE_TYPE_CHARACTER_DEVICE:
-            name = "f" + fi.name
+            sort_name = "f" + fi.name
+            disp_name = "<b>-</b>" + disp_name
         elif fi.type == gnome.vfs.FILE_TYPE_BLOCK_DEVICE:
-            name = "g" + fi.name
+            sort_name = "g" + fi.name
+            disp_name = "<b>+</b>" + disp_name
+        else:
+            sort_name = "h" + fi.name
+            disp_name = "<b>?</b>" + disp_name
+            pass
+
+        gtk.ListStore.append(self,
+                             (fi,
+                              disp_name,
+                              sort_name,
+                              None,
+                              False,
+                              "LightBlue"))
+        
         pass
 
-        self.dir_entries.append((name, fi))
+    def sort(self):
+        gtk.ListStore.set_sort_column_id(self, 2, gtk.SORT_ASCENDING)
         pass
         
 
@@ -80,17 +107,11 @@ class Panel:
         self.tv = tv
         self.cmb = cmb
         self.lbl = lbl
-        self.dir_cache = dir_cache
+        self.dir_cache = {} #dir_cache
 
-#        self.model = gtk.TreeStore(gnome.vfs.URI, gnome.vfs.FileInfo, gobject.TYPE_STRING)
-        self.model = gtk.TreeStore(gobject.TYPE_PYOBJECT, gobject.TYPE_PYOBJECT,
-                              gobject.TYPE_STRING, gtk.gdk.Pixbuf, 'gboolean', str)
-        #model.set_sort_func(1, self.__sort_panel, None)
-        self.tv.set_model(self.model)
-        self.sel = self.tv.get_selection()
+        self.tv.get_selection().set_mode(gtk.SELECTION_NONE)
 
         cwd = os.getcwd()
-        self.curr_uri = gnome.vfs.URI("file://"+cwd)
         self.curr_path = 0
         self.curr_iter = None
 
@@ -98,11 +119,9 @@ class Panel:
         clmn = gtk.TreeViewColumn("Icon", renderer, pixbuf=3)
         self.tv.append_column(clmn)
         renderer = gtk.CellRendererText()
-        clmn = gtk.TreeViewColumn("Name", renderer, markup=2,
+        clmn = gtk.TreeViewColumn("Name", renderer, markup=1,
                                   background_set=4, background=5)
         self.tv.append_column(clmn)
-
-        self.sel.set_mode(gtk.SELECTION_NONE)
 
         self.tv.connect("key_press_event", self.on_tv_key_press_event)
         self.tv.connect("cursor_changed", self.on_tv_cursor_changed)
@@ -111,7 +130,7 @@ class Panel:
         
         self.cmb.connect("activate", self.on_cmb_activate)
 
-        self.__load_list()
+        self.__load_list(gnome.vfs.URI("file://"+cwd))
 
         self.tv.show()
         pass
@@ -188,110 +207,50 @@ class Panel:
         self.tv.set_cursor(self.curr_path)
         pass
 
-    def __sort_panel(self, treemodel, iter1, iter2, user_data):
-        fi1 = treemodel.get_value(iter1, 1)
-        fi2 = treemodel.get_value(iter2, 1)
-        if fi1 == None or fi2 == None:
-            return 0
-        if fi1.type == fi2.type:
-            return cmp(fi1.name, fi2.name)
-        else:
-            return fi2.type - fi1.type
-        pass
-
-    def __set_list_entry(self, entry):
-        model = self.model
-        fi = entry[1]
-        uri = self.curr_uri.append_string(fi.name)
-        iter = model.insert_before(None, None)
-        model.set_value(iter, 0, uri)
-        model.set_value(iter, 1, fi)
-        model.set_value(iter, 4, False)
-        model.set_value(iter, 5, "LightBlue")
-        name = fi.name.replace("&", "&amp;")
-        if fi.type == gnome.vfs.FILE_TYPE_REGULAR:
-            model.set_value(iter, 2, name)
-            #mime_type = gnome.vfs.get_mime_type(str(uri))
-            #stock_icon = gnome.vfs.mime_get_icon(mime_type)
-            #if stock_icon != None and stock_icon != "":
-            #    stock_icon = "/usr/share/pixmaps/gnome-commander/mime-icons/"+stock_icon+".png"
-            #    print "mime: ", mime_type
-            #    print "stock: ", stock_icon
-            #    #icon = treeview.render_icon(gtk.STOCK_OPEN,
-            #    #                            size=gtk.ICON_SIZE_MENU,
-            #    #                            detail=None)
-            #    #icon = gtk.gdk.pixbuf_new_from_file(stock_icon)
-            #    icon = None
-            #else:
-            #    icon = None
-            icon = None    
-            model.set_value(iter, 3, icon)
-        elif fi.type == gnome.vfs.FILE_TYPE_DIRECTORY:
-            model.set_value(iter, 2, "<b>/"+name+"</b>")
-        elif fi.type == gnome.vfs.FILE_TYPE_FIFO:
-            model.set_value(iter, 2, "<b>|</b>"+name)
-        elif fi.type == gnome.vfs.FILE_TYPE_SOCKET:
-            model.set_value(iter, 2, "<b>=</b>"+name)
-        elif fi.type == gnome.vfs.FILE_TYPE_CHARACTER_DEVICE:
-            model.set_value(iter, 2, "<b>-</b>"+name)
-        elif fi.type == gnome.vfs.FILE_TYPE_BLOCK_DEVICE:
-            model.set_value(iter, 2, "<b>+</b>"+name)
-        elif fi.type == gnome.vfs.FILE_TYPE_SYMBOLIC_LINK:
-            model.set_value(iter, 2, "<b>~</b>"+name)
-        else:
-            model.set_value(iter, 2, "<b>?</b>"+name)
-            pass
-        pass
-    
-    def __load_list(self):
+    def __load_list(self, dir_uri):
         try:
-            dh = gnome.vfs.DirectoryHandle(self.curr_uri)
+            dh = gnome.vfs.DirectoryHandle(dir_uri)
         except gnome.vfs.InvalidURIError:
             return
         except gnome.vfs.AccessDeniedError:
             self.appbar.set_status("Access denied")
             return
 
-        if not self.dir_cache.has_key(str(self.curr_uri)):
-            dir_cache_entry = DirCacheEntry(self.curr_uri)
-            self.dir_cache[str(self.curr_uri)] = dir_cache_entry
+        if not self.dir_cache.has_key(str(dir_uri)):
+            dir_cache_entry = DirCacheEntry(dir_uri)
+            self.dir_cache[str(dir_uri)] = dir_cache_entry
             cached = False
         else:
             cached = True
-            dir_cache_entry = self.dir_cache[str(self.curr_uri)]
+            dir_cache_entry = self.dir_cache[str(dir_uri)]
             pass
 
-        listitem = gtk.ListItem(str(self.curr_uri))
+        listitem = gtk.ListItem(str(dir_uri))
         self.cmb.list.append_items([listitem])
         listitem.show()        
-        self.cmb.entry.set_text(str(self.curr_uri))
+        self.cmb.entry.set_text(str(dir_uri))
         
-        self.model.clear()
-
         if not cached:
             print "from disc"
             entries = []
             while True:
                 try:
                     fi = dh.next()
-                    dir_cache_entry.add_dir_entry(fi)
+                    dir_cache_entry.append(fi)
                 except StopIteration:
                     break
                 pass
-            dir_cache_entry.dir_entries.sort()
-            map(self.__set_list_entry, dir_cache_entry.dir_entries)
+            dir_cache_entry.sort()
             pass
-        else:
-            print "from cache"
-            map(self.__set_list_entry, dir_cache_entry.dir_entries)
-            pass
+        self.model = dir_cache_entry
+        self.tv.set_model(dir_cache_entry)
 
         #model.set_sort_column_id(1, gtk.SORT_ASCENDING)
         self.tv.show()
         pass
 
     def __fe_goto_entry(self, model, path, iter, dir):
-        d = model.get_value(iter, 2)
+        d = model.get_value(iter, 1)
         if len(d) < 9:
             return gtk.FALSE
         if d[4:-4] == dir:
@@ -306,34 +265,30 @@ class Panel:
         pass
     
     def __chdir_up(self):
-        dir = str(self.curr_uri).strip("/").split("/")[-1]
-        self.curr_uri = self.curr_uri.append_path("..")
-        self.__load_list()
+        dir = str(self.model.uri).strip("/").split("/")[-1]
+        self.__load_list(self.model.uri.append_path(".."))
         self.__goto_entry(dir)
         pass
 
     def __chdir_down(self):
-        self.curr_uri = self.model.get_value(self.curr_iter, 0)
-        self.__load_list()
+        fi = self.model.get_value(self.curr_iter, 0)
+        self.__load_list(self.model.uri.append_path(fi.name))
         self.__goto_entry("..")
         pass
 
     def __chdir_to(self):
-        self.curr_uri = gnome.vfs.URI(self.cmb.entry.get_text())
-        self.__load_list()
+        self.__load_list(gnome.vfs.URI(self.cmb.entry.get_text()))
         self.__goto_entry("..")
         pass
 
     def __activate(self, path):
         model = self.model
         iter = model.get_iter(path)
-        uri = model.get_value(iter, 0)
-        fi = model.get_value(iter, 1)
-        #name = model.get_value(iter, 2)
+        fi = model.get_value(iter, 0)
+        uri = model.uri.append_path(fi.name)
 
         if fi.type == gnome.vfs.FILE_TYPE_DIRECTORY:
-            self.curr_uri = uri
-            self.__load_list()
+            self.__load_list(uri)
             self.__goto_entry("..")
         elif fi.type == gnome.vfs.FILE_TYPE_REGULAR:
             mime_type = gnome.vfs.get_mime_type(str(uri))
@@ -454,3 +409,20 @@ class Fc:
 
 fc = Fc()
 
+
+# setting icon
+#             #mime_type = gnome.vfs.get_mime_type(str(uri))
+#             #stock_icon = gnome.vfs.mime_get_icon(mime_type)
+#             #if stock_icon != None and stock_icon != "":
+#             #    stock_icon = "/usr/share/pixmaps/gnome-commander/mime-icons/"+stock_icon+".png"
+#             #    print "mime: ", mime_type
+#             #    print "stock: ", stock_icon
+#             #    #icon = treeview.render_icon(gtk.STOCK_OPEN,
+#             #    #                            size=gtk.ICON_SIZE_MENU,
+#             #    #                            detail=None)
+#             #    #icon = gtk.gdk.pixbuf_new_from_file(stock_icon)
+#             #    icon = None
+#             #else:
+#             #    icon = None
+#             icon = None    
+#             model.set_value(iter, 3, icon)
