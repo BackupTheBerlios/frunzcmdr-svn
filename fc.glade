@@ -683,7 +683,7 @@
 	  <property name="layout_style">GTK_BUTTONBOX_END</property>
 
 	  <child>
-	    <widget class="GtkButton" id="btn_cpy_cancel">
+	    <widget class="GtkButton" id="btn_prgrs_cancel">
 	      <property name="visible">True</property>
 	      <property name="can_default">True</property>
 	      <property name="can_focus">True</property>
@@ -696,7 +696,19 @@
 	  </child>
 
 	  <child>
-	    <widget class="GtkButton" id="btn_cpy_dock">
+	    <widget class="GtkButton" id="btn_prgrs_ok">
+	      <property name="can_default">True</property>
+	      <property name="can_focus">True</property>
+	      <property name="label">gtk-ok</property>
+	      <property name="use_stock">True</property>
+	      <property name="relief">GTK_RELIEF_NORMAL</property>
+	      <property name="focus_on_click">True</property>
+	      <property name="response_id">-5</property>
+	    </widget>
+	  </child>
+
+	  <child>
+	    <widget class="GtkButton" id="btn_prgrs_dock">
 	      <property name="visible">True</property>
 	      <property name="can_default">True</property>
 	      <property name="can_focus">True</property>
@@ -724,7 +736,7 @@
 	  <property name="spacing">0</property>
 
 	  <child>
-	    <widget class="GtkLabel" id="lbl_dlg">
+	    <widget class="GtkLabel" id="lbl_prgrs">
 	      <property name="visible">True</property>
 	      <property name="label" translatable="yes">label1</property>
 	      <property name="use_underline">False</property>
@@ -745,7 +757,7 @@
 	  </child>
 
 	  <child>
-	    <widget class="GtkProgressBar" id="prgrs_cpy">
+	    <widget class="GtkProgressBar" id="prgrs_bar">
 	      <property name="visible">True</property>
 	      <property name="orientation">GTK_PROGRESS_LEFT_TO_RIGHT</property>
 	      <property name="fraction">0</property>
