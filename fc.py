@@ -184,26 +184,40 @@ class Panel:
         #name
         name = "<b>"+fi.name+"</b>"
         #determine permissions
-        perm = ["-", "-","-","-", "-","-","-", "-","-","-"]
+        perm_u = ["-","-","-"]
+        perm_g = ["-","-","-"]
+        perm_o = ["-","-","-"]
         if fi.permissions & gnome.vfs.PERM_USER_READ:
-            perm[1] = "r"
+            perm_u[0] = "r"
         if fi.permissions & gnome.vfs.PERM_USER_WRITE:
-            perm[2] = "w"
+            perm_u[1] = "w"
         if fi.permissions & gnome.vfs.PERM_USER_EXEC:
-            perm[3] = "x"
+            perm_u[2] = "x"
+        perm_u = "".join(perm_u)
         if fi.permissions & gnome.vfs.PERM_GROUP_READ:
-            perm[4] = "r"
+            perm_g[0] = "r"
         if fi.permissions & gnome.vfs.PERM_GROUP_WRITE:
-            perm[5] = "w"
+            perm_g[1] = "w"
         if fi.permissions & gnome.vfs.PERM_GROUP_EXEC:
-            perm[6] = "x"
+            perm_g[2] = "x"
+        perm_g = "".join(perm_g)
         if fi.permissions & gnome.vfs.PERM_OTHER_READ:
-            perm[7] = "r"
+            perm_o[0] = "r"
         if fi.permissions & gnome.vfs.PERM_OTHER_WRITE:
-            perm[8] = "w"
+            perm_o[1] = "w"
         if fi.permissions & gnome.vfs.PERM_OTHER_EXEC:
-            perm[9] = "x"
-        perm = "".join(perm)
+            perm_o[2] = "x"
+        perm_o = "".join(perm_o)
+            
+        if os.geteuid() == fi.uid:
+            perm_u = "<b>"+perm_u+"</b>"
+        elif os.getegid() == fi.gid:
+            perm_g = "<b>"+perm_g+"</b>"
+        else:
+            perm_o = "<b>"+perm_o+"</b>"
+            pass
+            
+        perm = perm_u + perm_g + perm_o
 
         #determine size
         if fi.size < 1024:
@@ -218,6 +232,8 @@ class Panel:
 
         #determine modification time
         t = time.strftime("%b %d %H:%M", time.gmtime(fi.mtime))
+
+        #set label
         sep = "  <span foreground='blue' weight='bold'>/</span>  "
         self.lbl.set_markup(name + sep + t + sep + size + sep + perm)
         pass
