@@ -53,6 +53,61 @@ class stock_list(gtk.TreeView):
         col = gtk.TreeViewColumn('Stock Item', cell, text=1)
         self.append_column(col)
 
+class KeyBindings:
+    # Key actions              Default key
+    KEY_HELP          = 0    # F1
+    KEY_EDIT_NAME     = 1    # F2
+    KEY_VIEW          = 2    # F3
+    KEY_EDIT          = 3    # F4
+    KEY_COPY          = 4    # F5
+    KEY_MOVE          = 5    # F6
+    KEY_MKDIR         = 6    # F7
+    KEY_DELETE        = 7    # F8
+    KEY_OTHER1        = 8    # F9
+    KEY_QUIT          = 9    # F10
+    KEY_DOWN_DIR      = 10   # Right, Enter
+    KEY_UP_DIR        = 11   # Left, Backspace
+    KEY_SELECT        = 12   # Insert
+    KEY_SWITCH_PANEL  = 13   # Tab
+    
+    def __init__(self):
+        self.proc_bindings = {}
+        self.key_bindings = {}
+
+        self.key_bindings[gtk.gdk.keyval_from_name("F1")] = self.KEY_HELP
+        self.key_bindings[gtk.gdk.keyval_from_name("F2")] = self.KEY_EDIT_NAME
+        self.key_bindings[gtk.gdk.keyval_from_name("F3")] = self.KEY_VIEW
+        self.key_bindings[gtk.gdk.keyval_from_name("F4")] = self.KEY_EDIT
+        self.key_bindings[gtk.gdk.keyval_from_name("F5")] = self.KEY_COPY
+        self.key_bindings[gtk.gdk.keyval_from_name("F6")] = self.KEY_MOVE
+        self.key_bindings[gtk.gdk.keyval_from_name("F7")] = self.KEY_MKDIR
+        self.key_bindings[gtk.gdk.keyval_from_name("F8")] = self.KEY_DELETE
+        self.key_bindings[gtk.gdk.keyval_from_name("F9")] = self.KEY_OTHER1
+        self.key_bindings[gtk.gdk.keyval_from_name("F10")] = self.KEY_QUIT
+        self.key_bindings[gtk.gdk.keyval_from_name("Right")] = self.KEY_DOWN_DIR
+        self.key_bindings[gtk.gdk.keyval_from_name("Enter")] = self.KEY_DOWN_DIR
+        self.key_bindings[gtk.gdk.keyval_from_name("Left")] = self.KEY_UP_DIR
+        self.key_bindings[gtk.gdk.keyval_from_name("Backspace")] = self.KEY_UP_DIR
+        self.key_bindings[gtk.gdk.keyval_from_name("Insert")] = self.KEY_SELECT
+        self.key_bindings[gtk.gdk.keyval_from_name("Tab")] = self.KEY_SWITCH_PANEL
+        pass
+    
+    def def_proc_binding(self, key_action, procedure):
+        self.proc_bindings[key_action] = procedure
+        pass
+     
+    def process_key(self, key_val):
+        if self.key_bindings.has_key(key_val):
+            key_action = self.key_bindings[key_val]
+            if self.proc_bindings.has_key(key_action):
+                proc = self.proc_bindings[key_action]
+                proc()
+                return True
+            pass
+        return False
+    
+    pass
+
 class DirCacheEntry(gtk.ListStore):
     def __init__(self, dh, dir_uri):
         self.dh = dh
@@ -158,14 +213,22 @@ class DirCacheEntry(gtk.ListStore):
         
 
 class Panel:
-    def __init__(self, tv, cmb, lbl, dir_cache, xml):
+    def __init__(self, tv, cmb, lbl, dir_cache, xml, key_bindings):
         self.tv = tv
         self.cmb = cmb
         self.lbl = lbl
         self.dir_cache = {} #dir_cache
         self.xml = xml
 
-        self.tv.get_selection().set_mode(gtk.SELECTION_NONE)
+        self.key_bindings = key_bindings
+        self.bind_keys()
+
+
+        self.appbar = xml.get_widget('appbar')
+        self.dlg_mkdir = xml.get_widget('dlg_mkdir')
+        self.ent_mkdir = xml.get_widget('ent_mkdir')
+
+        self.tv.get_selection().set_mode(gtk.SELECTION_SINGLE)
 
         cwd = os.getcwd()
         self.curr_path = 0
@@ -179,7 +242,6 @@ class Panel:
                                   background_set=4, background=5)
         self.tv.append_column(clmn)
 
-        self.tv.connect("key_press_event", self.on_tv_key_press_event)
         self.tv.connect("cursor_changed", self.on_tv_cursor_changed)
         self.tv.connect("row_activated", self.on_tv_row_activated)
         self.tv.connect("select_cursor_parent", self.on_tv_select_cursor_parent)
@@ -191,7 +253,17 @@ class Panel:
         self.tv.show()
         pass
 
-    def __view_file(self):
+    def bind_keys(self):
+        self.key_bindings.def_proc_binding(KeyBindings.KEY_UP_DIR, self.act_chdir_up)
+        self.key_bindings.def_proc_binding(KeyBindings.KEY_DOWN_DIR, self.act_chdir_down)
+        self.key_bindings.def_proc_binding(KeyBindings.KEY_EDIT_NAME, self.act_edit_name)
+        self.key_bindings.def_proc_binding(KeyBindings.KEY_VIEW, self.act_view_file)
+        self.key_bindings.def_proc_binding(KeyBindings.KEY_MKDIR, self.act_mkdir)
+        self.key_bindings.def_proc_binding(KeyBindings.KEY_DELETE, self.act_delete)
+        self.key_bindings.def_proc_binding(KeyBindings.KEY_SELECT,  self.act_select)
+        pass
+
+    def act_view_file(self):
         model = self.model
         iter = model.get_iter(self.curr_path)
         fi = model.get_value(iter, 0)
@@ -207,45 +279,73 @@ class Panel:
         self.vbox1 = self.xml.get_widget('vbox1')
         self.vbox.remove(self.vbox1)
         self.vbox.pack_start(control)
+        pass
+    
+    def act_edit_name(self):
+        self.tv.set_cursor(self.curr_path, start_editing=gtk.TRUE)
+        pass
 
-    def on_tv_key_press_event(self, widget, event):
-        if event.keyval == gtk.gdk.keyval_from_name("Left"):
-            self.__chdir_up()
-            return gtk.TRUE
-        elif event.keyval == gtk.gdk.keyval_from_name("Right"):
-            self.__chdir_down()
-            return gtk.TRUE
-        elif event.keyval == gtk.gdk.keyval_from_name("F2"):
-            print "F2"
-            self.tv.set_cursor(self.curr_path, start_editing=gtk.TRUE)
-            return gtk.TRUE
-        elif event.keyval == gtk.gdk.keyval_from_name("F3"):
-            print "F3"
-            self.__view_file()
-            return gtk.TRUE
-        elif event.keyval == gtk.gdk.keyval_from_name("F4"):
-            print "F4"
-            return gtk.TRUE
-        elif event.keyval == gtk.gdk.keyval_from_name("F6"):
-            print "F6"
-            return gtk.TRUE
-        elif event.keyval == gtk.gdk.keyval_from_name("F7"):
-            print "F7"
-            return gtk.TRUE
-        elif event.keyval == gtk.gdk.keyval_from_name("F8"):
-            print "F8"
-            return gtk.TRUE
-        elif event.keyval == gtk.gdk.keyval_from_name("F9"):
-            print "F9"
-            return gtk.TRUE
-        elif event.keyval == gtk.gdk.keyval_from_name("Insert"):
-            print "Insert"
-            bg_set = not self.model.get_value(self.curr_iter, 4)
-            self.model.set_value(self.curr_iter, 4, bg_set)
-            self.tv.set_cursor(self.curr_path[0] + 1)
-            return gtk.TRUE
-        return gtk.FALSE
+    def act_select(self):
+        print "Insert"
+        bg_set = not self.model.get_value(self.curr_iter, 4)
+        self.model.set_value(self.curr_iter, 4, bg_set)
+        self.tv.set_cursor(self.curr_path[0] + 1)
+        pass
 
+    def act_chdir_up(self):
+        dir = str(self.model.dir_uri).strip("/").split("/")[-1]
+        self.__load_list(self.model.dir_uri.append_path(".."))
+        self.__goto_entry(dir)
+        pass
+
+    def act_chdir_down(self):
+        fi = self.model.get_value(self.curr_iter, 0)
+        self.__load_list(self.model.dir_uri.append_path(fi.name))
+        self.__goto_entry("..")
+        pass
+
+    def act_mkdir(self):
+        response = self.dlg_mkdir.run()
+        self.dlg_mkdir.hide()
+        if response != gtk.RESPONSE_OK:
+            return
+
+        new_dir = self.ent_mkdir.get_text()
+        if new_dir == "":
+            return
+        new_dir_uri = self.model.dir_uri.append_path(new_dir)
+        gnome.vfs.make_directory(new_dir_uri, 0644)
+        print new_dir_uri
+        pass
+
+    def act_delete(self, uri):
+        uri, fname = self.panel_curr.get_selected_entry()
+        self.lbl_cpy_src.set_markup("<i>Copy</i> <b>"+str(s_uri)+"</b>   ")
+        self.ent_cpy_dest.set_text(str(d_uri))
+        response = self.dlg_cpy.run()
+        self.dlg_cpy.hide()
+        if response != gtk.RESPONSE_OK:
+            return
+        print "from "+str(s_uri)
+        print "to "+str(d_uri)
+        try:
+            gnome.vfs.xfer_uri(s_uri, d_uri,
+                               gnome.vfs.XFER_DEFAULT,
+                               gnome.vfs.XFER_ERROR_ACTION_SKIP,
+                               gnome.vfs.XFER_OVERWRITE_ACTION_ABORT,
+                               self.progress_cb, 0)
+        except gnome.vfs.InterruptedError:
+            print "Cannot copy: " + str(gnome.vfs.InterruptedError)
+            pass
+        self.dlg_prgrs.set_title("Deleting")
+        response = self.dlg_prgrs.run()
+        if response == gtk.RESPONSE_CANCEL:
+            print "Cancel"
+        elif response == gtk.RESPONSE_CLOSE:
+            print "Dock"
+            pass
+        pass
+    
     def on_tv_cursor_changed(self, widget):
         (self.curr_path, column) = self.tv.get_cursor()        
         self.curr_iter = self.model.get_iter(self.curr_path)
@@ -327,11 +427,16 @@ class Panel:
         pass
 
     def on_tv_select_cursor_parent(self, widget):
-        self.__chdir_up()
+        self.act_chdir_up()
         pass
 
     def on_cmb_activate(self, widget):
         self.__chdir_to()
+        pass
+
+    def __chdir_to(self):
+        self.__load_list(gnome.vfs.URI(self.cmb.entry.get_text()))
+        #self.__goto_entry("..")
         pass
 
     def __load_list(self, dir_uri):
@@ -376,23 +481,6 @@ class Panel:
         #self.tv.scroll_to_cell(self.curr_path)
         pass
     
-    def __chdir_up(self):
-        dir = str(self.model.dir_uri).strip("/").split("/")[-1]
-        self.__load_list(self.model.dir_uri.append_path(".."))
-        self.__goto_entry(dir)
-        pass
-
-    def __chdir_down(self):
-        fi = self.model.get_value(self.curr_iter, 0)
-        self.__load_list(self.model.dir_uri.append_path(fi.name))
-        self.__goto_entry("..")
-        pass
-
-    def __chdir_to(self):
-        self.__load_list(gnome.vfs.URI(self.cmb.entry.get_text()))
-        #self.__goto_entry("..")
-        pass
-
     def __activate(self, path):
         model = self.model
         iter = model.get_iter(path)
@@ -438,40 +526,48 @@ class Fc:
             self.switch_shell_panels = 0
         pass
 
-    def __switch_panel(self):
+    def on_switch_other_panel_activate(self, widget):
+        self.act_switch_panel()
+        pass
+
+    def on_app_key_press_event(self, widget, event):
+        #print event.keyval
+        if self.key_bindings.process_key(event.keyval):
+            return gtk.TRUE
+        return gtk.FALSE
+
+    def bind_keys(self):
+        self.key_bindings.def_proc_binding(KeyBindings.KEY_SWITCH_PANEL, self.act_switch_panel)
+        self.key_bindings.def_proc_binding(KeyBindings.KEY_COPY, self.act_copy)
+        self.key_bindings.def_proc_binding(KeyBindings.KEY_QUIT, self.act_quit)
+        pass
+
+    def act_switch_panel(self):
         self.current = 1 - self.current
         self.panel_other = self.panel_curr
         self.panel_curr = self.panel[self.current]
         self.panel_curr.tv.grab_focus()
 
-    def on_switch_other_panel_activate(self, widget):
-        self.__switch_panel()
+    def act_quit(self):
+        gtk.main_quit()
         pass
 
-    def on_app_key_press_event(self, widget, event):
-        #print event.keyval
-        if event.keyval == gtk.gdk.keyval_from_name("Tab"):
-            self.__switch_panel()
-            return gtk.TRUE
-        elif event.keyval == gtk.gdk.keyval_from_name("F1"):
-            print "F1"
-            return gtk.TRUE
-        elif event.keyval == gtk.gdk.keyval_from_name("F5"):
-            print "F5"
-            furi, fname = self.panel_curr.get_selected_entry()
-            self.__copy(furi, self.panel_other.get_curr_dir().append_path(fname))
-            return gtk.TRUE
-        elif event.keyval == gtk.gdk.keyval_from_name("F10"):
-            print "F10"
-            gtk.main_quit()
-            return gtk.TRUE
-        return gtk.FALSE
-
     def progress_cb(self, info, data):
-        print "Bytes copied %d/%d" % (info.bytes_copied, info.bytes_total)
+        prgrs = "Bytes copied %d/%d" % (info.bytes_copied, info.bytes_total)
+        self.lbl_dlg1.set_text(prgrs)
+        print prgrs
         return 1
     
-    def __copy(self, s_uri, d_uri):
+    def act_copy(self):
+        s_uri, fname = self.panel_curr.get_selected_entry()
+        d_uri = self.panel_other.get_curr_dir().append_path(fname)
+
+        self.lbl_cpy_src.set_markup("<i>Copy</i> <b>"+str(s_uri)+"</b>   ")
+        self.ent_cpy_dest.set_text(str(d_uri))
+        response = self.dlg_cpy.run()
+        self.dlg_cpy.hide()
+        if response != gtk.RESPONSE_OK:
+            return
         print "from "+str(s_uri)
         print "to "+str(d_uri)
         try:
@@ -482,9 +578,22 @@ class Fc:
                                self.progress_cb, 0)
         except gnome.vfs.InterruptedError:
             print "Cannot copy: " + str(gnome.vfs.InterruptedError)
+            pass
+        self.dlg_prgrs.set_title("Copying")
+        response = self.dlg_prgrs.run()
+        if response == gtk.RESPONSE_CANCEL:
+            print "Cancel"
+        elif response == gtk.RESPONSE_CLOSE:
+            print "Dock"
+            pass
         pass
 
     def __init__(self):
+
+        self.key_bindings = KeyBindings()
+        self.bind_keys()
+
+        
         #self.gnomeApp = gnome.ui.GnomeApp(self, 'pygnome-hello-world', 'pygnome_hello')
 	#self.gnomeApp.set_wmclass('pygnome_hello', 'pygnome_hello')
         gnome.init("FC", "FC")
@@ -498,7 +607,13 @@ class Fc:
         app = xml.get_widget('app')
         self.vbox = xml.get_widget('vbox')
         self.vbox1 = xml.get_widget('vbox1')
-        self.appbar = xml.get_widget('appbar')   
+        self.appbar = xml.get_widget('appbar')
+        self.dlg_cpy = xml.get_widget('dlg_cpy')
+        self.lbl_cpy_src = xml.get_widget('lbl_cpy_src')
+        self.ent_cpy_dest = xml.get_widget('ent_cpy_dest')
+        self.dlg_prgrs = xml.get_widget('dlg_prgrs')
+        self.lbl_dlg1 = xml.get_widget('lbl_dlg1')
+        
         xml.signal_autoconnect({
             'on_win_destroy': gtk.main_quit,
             'on_switch_to_shell_panels_activate': self.on_switch_to_shell_panels_activate,
@@ -536,11 +651,15 @@ class Fc:
         self.panel.append(Panel(xml.get_widget('tv_left'),
                                 xml.get_widget('cmb_left'),
                                 xml.get_widget('lbl_left'),
-                                self.dir_cache, xml))
+                                self.dir_cache,
+                                xml,
+                                self.key_bindings))
         self.panel.append(Panel(xml.get_widget('tv_right'),
                                 xml.get_widget('cmb_right'),
                                 xml.get_widget('lbl_right'),
-                                self.dir_cache, xml))
+                                self.dir_cache,
+                                xml,
+                                self.key_bindings))
 
 
         app.show()
