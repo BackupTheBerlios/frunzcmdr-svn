@@ -1,6 +1,8 @@
 #!/usr/bin/python2.3
 import sys
 import os
+import profile
+import time
 
 import pygtk
 pygtk.require('2.0')
@@ -8,13 +10,16 @@ pygtk.require('2.0')
 import gobject
 import gtk
 import gtk.glade
-import gnome.zvt
+import gnome
 import gnome.vfs
 import gnome.ui
+import vte
 
-import profile
+import bonobo
+import bonobo.ui
 
-import time
+import psyco
+psyco.full()
 
 LEFT = 0
 RIGHT = 1
@@ -49,8 +54,9 @@ class stock_list(gtk.TreeView):
         self.append_column(col)
 
 class DirCacheEntry(gtk.ListStore):
-    def __init__(self, uri):
-        self.uri = uri
+    def __init__(self, dh, dir_uri):
+        self.dh = dh
+        self.dir_uri = dir_uri
         self.path = "0"
         gtk.ListStore.__init__(self,
                                gobject.TYPE_PYOBJECT, # 0-fi
@@ -59,33 +65,73 @@ class DirCacheEntry(gtk.ListStore):
                                gtk.gdk.Pixbuf,        # 3-icon
                                'gboolean',            # 4-selected
                                str)                   # 5-selection bg color
+
+        while True:
+            try:
+                fi = dh.next()
+                self.__append(fi)
+            except StopIteration:
+                break
+            pass
+        self.sort()
+
+        gnome.vfs.monitor_add(str(dir_uri),
+                              gnome.vfs.MONITOR_DIRECTORY,
+                              self.__monitor_cb, 0)
+        
         pass
 
-    def append(self, fi):
+    def __monitor_cb(self, monitor_uri, info_uri, event_type, data):
+        print "monitor"
+        
+        if event_type == gnome.vfs.MONITOR_EVENT_CHANGED:
+            pass
+        elif event_type == gnome.vfs.MONITOR_EVENT_DELETED:
+            self.__remove(info_uri)
+            self.sort()
+        elif event_type == gnome.vfs.MONITOR_EVENT_STARTEXECUTING:
+            pass
+        elif event_type == gnome.vfs.MONITOR_EVENT_STOPEXECUTING:
+            pass
+        elif event_type == gnome.vfs.MONITOR_EVENT_CREATED:
+            fi = gnome.vfs.get_file_info(info_uri)
+            self.__append(fi)
+            self.sort()
+        elif event_type == gnome.vfs.MONITOR_EVENT_METADATA_CHANGED:
+            pass
+        pass
+    
+    def __append(self, fi):
         disp_name = fi.name.replace("&", "&amp;")
-        if fi.type == gnome.vfs.FILE_TYPE_DIRECTORY:
-            sort_name = "a" + fi.name
-            disp_name = "<b>/" + disp_name + "</b>"
-        elif fi.type == gnome.vfs.FILE_TYPE_REGULAR:
-            sort_name = "b" + fi.name
-        elif fi.type == gnome.vfs.FILE_TYPE_SYMBOLIC_LINK:
-            sort_name = "c" + fi.name
-            disp_name = "<b>~</b>" + disp_name
-        elif fi.type == gnome.vfs.FILE_TYPE_FIFO:
-            sort_name = "d" + fi.name
-            disp_name = "<b>|</b>" + disp_name
-        elif fi.type == gnome.vfs.FILE_TYPE_SOCKET:
-            sort_name = "e" + fi.name
-            disp_name = "<b>=</b>" + disp_name
-        elif fi.type == gnome.vfs.FILE_TYPE_CHARACTER_DEVICE:
-            sort_name = "f" + fi.name
-            disp_name = "<b>-</b>" + disp_name
-        elif fi.type == gnome.vfs.FILE_TYPE_BLOCK_DEVICE:
-            sort_name = "g" + fi.name
-            disp_name = "<b>+</b>" + disp_name
+        if fi.valid_fields & gnome.vfs.FILE_INFO_FIELDS_TYPE:
+            if fi.type == gnome.vfs.FILE_TYPE_DIRECTORY:
+                sort_name = "a" + fi.name
+                disp_name = "<b>/" + disp_name + "</b>"
+            elif fi.type == gnome.vfs.FILE_TYPE_REGULAR:
+                sort_name = "b" + fi.name
+            elif fi.type == gnome.vfs.FILE_TYPE_SYMBOLIC_LINK:
+                sort_name = "c" + fi.name
+                disp_name = "<b>~</b>" + disp_name
+            elif fi.type == gnome.vfs.FILE_TYPE_FIFO:
+                sort_name = "d" + fi.name
+                disp_name = "<b>|</b>" + disp_name
+            elif fi.type == gnome.vfs.FILE_TYPE_SOCKET:
+                sort_name = "e" + fi.name
+                disp_name = "<b>=</b>" + disp_name
+            elif fi.type == gnome.vfs.FILE_TYPE_CHARACTER_DEVICE:
+                sort_name = "f" + fi.name
+                disp_name = "<b>-</b>" + disp_name
+            elif fi.type == gnome.vfs.FILE_TYPE_BLOCK_DEVICE:
+                sort_name = "g" + fi.name
+                disp_name = "<b>+</b>" + disp_name
+            else:
+                sort_name = "h" + fi.name
+                disp_name = "<b>?</b>" + disp_name
+                pass
+            pass
         else:
-            sort_name = "h" + fi.name
-            disp_name = "<b>?</b>" + disp_name
+            sort_name = fi.name
+            disp_name = disp_name
             pass
 
         gtk.ListStore.append(self,
@@ -98,17 +144,26 @@ class DirCacheEntry(gtk.ListStore):
         
         pass
 
+    def __remove(self, uri):
+        for row in self:
+            if str(self.dir_uri)+"/"+row[0].name == uri:
+                gtk.ListStore.remove(self, row.iter)
+                break
+            pass
+        pass
+
     def sort(self):
         gtk.ListStore.set_sort_column_id(self, 2, gtk.SORT_ASCENDING)
         pass
         
 
 class Panel:
-    def __init__(self, tv, cmb, lbl, dir_cache):
+    def __init__(self, tv, cmb, lbl, dir_cache, xml):
         self.tv = tv
         self.cmb = cmb
         self.lbl = lbl
         self.dir_cache = {} #dir_cache
+        self.xml = xml
 
         self.tv.get_selection().set_mode(gtk.SELECTION_NONE)
 
@@ -136,6 +191,23 @@ class Panel:
         self.tv.show()
         pass
 
+    def __view_file(self):
+        model = self.model
+        iter = model.get_iter(self.curr_path)
+        fi = model.get_value(iter, 0)
+        uri = model.dir_uri.append_path(fi.name)
+        print uri
+        uic = bonobo.ui.Container()
+        control = bonobo.ui.Widget("OAFIID:Nautilus_Text_View", uic.corba_objref())
+        control.show()
+        obj = control.get_objref().queryInterface("IDL:Nautilus/View:1.0")
+        obj.load_location(str(uri))
+        obj.unref()
+        self.vbox = self.xml.get_widget('vbox')
+        self.vbox1 = self.xml.get_widget('vbox1')
+        self.vbox.remove(self.vbox1)
+        self.vbox.pack_start(control)
+
     def on_tv_key_press_event(self, widget, event):
         if event.keyval == gtk.gdk.keyval_from_name("Left"):
             self.__chdir_up()
@@ -149,12 +221,10 @@ class Panel:
             return gtk.TRUE
         elif event.keyval == gtk.gdk.keyval_from_name("F3"):
             print "F3"
+            self.__view_file()
             return gtk.TRUE
         elif event.keyval == gtk.gdk.keyval_from_name("F4"):
             print "F4"
-            return gtk.TRUE
-        elif event.keyval == gtk.gdk.keyval_from_name("F5"):
-            print "F5"
             return gtk.TRUE
         elif event.keyval == gtk.gdk.keyval_from_name("F6"):
             print "F6"
@@ -177,61 +247,75 @@ class Panel:
         return gtk.FALSE
 
     def on_tv_cursor_changed(self, widget):
-        (self.curr_path, column) = self.tv.get_cursor()
+        (self.curr_path, column) = self.tv.get_cursor()        
         self.curr_iter = self.model.get_iter(self.curr_path)
         fi = self.model.get_value(self.curr_iter, 0)
 
         #name
         name = "<b>"+fi.name+"</b>"
+        
         #determine permissions
-        perm_u = ["-","-","-"]
-        perm_g = ["-","-","-"]
-        perm_o = ["-","-","-"]
-        if fi.permissions & gnome.vfs.PERM_USER_READ:
-            perm_u[0] = "r"
-        if fi.permissions & gnome.vfs.PERM_USER_WRITE:
-            perm_u[1] = "w"
-        if fi.permissions & gnome.vfs.PERM_USER_EXEC:
-            perm_u[2] = "x"
-        perm_u = "".join(perm_u)
-        if fi.permissions & gnome.vfs.PERM_GROUP_READ:
-            perm_g[0] = "r"
-        if fi.permissions & gnome.vfs.PERM_GROUP_WRITE:
-            perm_g[1] = "w"
-        if fi.permissions & gnome.vfs.PERM_GROUP_EXEC:
-            perm_g[2] = "x"
-        perm_g = "".join(perm_g)
-        if fi.permissions & gnome.vfs.PERM_OTHER_READ:
-            perm_o[0] = "r"
-        if fi.permissions & gnome.vfs.PERM_OTHER_WRITE:
-            perm_o[1] = "w"
-        if fi.permissions & gnome.vfs.PERM_OTHER_EXEC:
-            perm_o[2] = "x"
-        perm_o = "".join(perm_o)
+        if fi.valid_fields & gnome.vfs.FILE_INFO_FIELDS_PERMISSIONS:
+            perm_u = ["-","-","-"]
+            perm_g = ["-","-","-"]
+            perm_o = ["-","-","-"]
+            if fi.permissions & gnome.vfs.PERM_USER_READ:
+                perm_u[0] = "r"
+            if fi.permissions & gnome.vfs.PERM_USER_WRITE:
+                perm_u[1] = "w"
+            if fi.permissions & gnome.vfs.PERM_USER_EXEC:
+                perm_u[2] = "x"
+            perm_u = "".join(perm_u)
+            if fi.permissions & gnome.vfs.PERM_GROUP_READ:
+                perm_g[0] = "r"
+            if fi.permissions & gnome.vfs.PERM_GROUP_WRITE:
+                perm_g[1] = "w"
+            if fi.permissions & gnome.vfs.PERM_GROUP_EXEC:
+                perm_g[2] = "x"
+            perm_g = "".join(perm_g)
+            if fi.permissions & gnome.vfs.PERM_OTHER_READ:
+                perm_o[0] = "r"
+            if fi.permissions & gnome.vfs.PERM_OTHER_WRITE:
+                perm_o[1] = "w"
+            if fi.permissions & gnome.vfs.PERM_OTHER_EXEC:
+                perm_o[2] = "x"
+            perm_o = "".join(perm_o)
             
-        if os.geteuid() == fi.uid:
-            perm_u = "<b>"+perm_u+"</b>"
-        elif os.getegid() == fi.gid:
-            perm_g = "<b>"+perm_g+"</b>"
+            if os.geteuid() == fi.uid:
+                perm_u = "<b>"+perm_u+"</b>"
+            elif os.getegid() == fi.gid:
+                perm_g = "<b>"+perm_g+"</b>"
+            else:
+                perm_o = "<b>"+perm_o+"</b>"
+                pass
+
+            perm = perm_u + perm_g + perm_o
         else:
-            perm_o = "<b>"+perm_o+"</b>"
+            perm = ""
             pass
-            
-        perm = perm_u + perm_g + perm_o
 
         #determine size
-        if fi.size < 1024:
-            size = str(fi.size)+"B"
-        elif fi.size < 1024*1024:
-            size = str(fi.size/1024)+"kB"
-        elif fi.size < 1024*1024*1024:
-            size = str(fi.size/1024/1024)+"MB"
+        if fi.valid_fields & gnome.vfs.FILE_INFO_FIELDS_SIZE:
+            if fi.size < 1024:
+                size = str(fi.size)+"B"
+            elif fi.size < 1024*1024:
+                size = str(fi.size/1024)+"kB"
+            elif fi.size < 1024*1024*1024:
+                size = str(fi.size/1024/1024)+"MB"
+            else:
+                size = str(fi.size/1024/1024/1024)+"GB"
+                pass
+            pass
         else:
-            size = str(fi.size/1024/1024/1024)+"GB"
+            size = ""
             pass
 
         #determine modification time
-        t = time.strftime("%b %d %H:%M", time.gmtime(fi.mtime))
+        if fi.valid_fields & gnome.vfs.FILE_INFO_FIELDS_MTIME:
+            t = time.strftime("%b %d %H:%M", time.gmtime(fi.mtime))
+        else:
+            t = ""
+            pass
 
         #set label
         sep = "  <span foreground='blue' weight='bold'>/</span>  "
@@ -260,33 +344,18 @@ class Panel:
             return
 
         if not self.dir_cache.has_key(str(dir_uri)):
-            dir_cache_entry = DirCacheEntry(dir_uri)
-            self.dir_cache[str(dir_uri)] = dir_cache_entry
-            cached = False
+            self.model = DirCacheEntry(dh, dir_uri)
+            self.dir_cache[str(dir_uri)] = self.model
         else:
-            cached = True
-            dir_cache_entry = self.dir_cache[str(dir_uri)]
+            self.model = self.dir_cache[str(dir_uri)]
             pass
+        self.tv.set_model(self.model)
 
         listitem = gtk.ListItem(str(dir_uri))
         self.cmb.list.append_items([listitem])
         listitem.show()        
         self.cmb.entry.set_text(str(dir_uri))
         
-        if not cached:
-            print "from disc"
-            entries = []
-            while True:
-                try:
-                    fi = dh.next()
-                    dir_cache_entry.append(fi)
-                except StopIteration:
-                    break
-                pass
-            dir_cache_entry.sort()
-            pass
-        self.model = dir_cache_entry
-        self.tv.set_model(dir_cache_entry)
 
         #model.set_sort_column_id(1, gtk.SORT_ASCENDING)
         self.tv.show()
@@ -308,27 +377,30 @@ class Panel:
         pass
     
     def __chdir_up(self):
-        dir = str(self.model.uri).strip("/").split("/")[-1]
-        self.__load_list(self.model.uri.append_path(".."))
+        dir = str(self.model.dir_uri).strip("/").split("/")[-1]
+        self.__load_list(self.model.dir_uri.append_path(".."))
         self.__goto_entry(dir)
         pass
 
     def __chdir_down(self):
         fi = self.model.get_value(self.curr_iter, 0)
-        self.__load_list(self.model.uri.append_path(fi.name))
+        self.__load_list(self.model.dir_uri.append_path(fi.name))
         self.__goto_entry("..")
         pass
 
     def __chdir_to(self):
         self.__load_list(gnome.vfs.URI(self.cmb.entry.get_text()))
-        self.__goto_entry("..")
+        #self.__goto_entry("..")
         pass
 
     def __activate(self, path):
         model = self.model
         iter = model.get_iter(path)
         fi = model.get_value(iter, 0)
-        uri = model.uri.append_path(fi.name)
+        uri = model.dir_uri.append_path(fi.name)
+
+        if fi.valid_fields & gnome.vfs.FILE_INFO_FIELDS_TYPE == 0:
+            return
 
         if fi.type == gnome.vfs.FILE_TYPE_DIRECTORY:
             self.__load_list(uri)
@@ -341,13 +413,21 @@ class Panel:
             pass
         pass
 
+    def get_selected_entry(self):
+        fi = self.model.get_value(self.curr_iter, 0)
+        return self.model.dir_uri.append_path(fi.name), fi.name
+
+    def get_curr_dir(self):
+        return self.model.dir_uri
+
 class Fc:
 
-    def child_died_event(self, zvt):
+    def child_died_event(self, terminal):
         gtk.main_quit()
         pass
 
     def on_switch_to_shell_panels_activate(self, widget):
+        print "aaa"
         if self.switch_shell_panels == 0:
             self.vbox.remove(self.vbox1)
             self.vbox.pack_start(self.hbox)
@@ -358,25 +438,51 @@ class Fc:
             self.switch_shell_panels = 0
         pass
 
-    def on_switch_other_panel_activate(self, widget):
+    def __switch_panel(self):
         self.current = 1 - self.current
-        self.panel[self.current].tv.grab_focus()
+        self.panel_other = self.panel_curr
+        self.panel_curr = self.panel[self.current]
+        self.panel_curr.tv.grab_focus()
+
+    def on_switch_other_panel_activate(self, widget):
+        self.__switch_panel()
         pass
 
     def on_app_key_press_event(self, widget, event):
         #print event.keyval
         if event.keyval == gtk.gdk.keyval_from_name("Tab"):
-            self.current = 1 - self.current
-            self.panel[self.current].tv.grab_focus()
+            self.__switch_panel()
             return gtk.TRUE
         elif event.keyval == gtk.gdk.keyval_from_name("F1"):
             print "F1"
+            return gtk.TRUE
+        elif event.keyval == gtk.gdk.keyval_from_name("F5"):
+            print "F5"
+            furi, fname = self.panel_curr.get_selected_entry()
+            self.__copy(furi, self.panel_other.get_curr_dir().append_path(fname))
             return gtk.TRUE
         elif event.keyval == gtk.gdk.keyval_from_name("F10"):
             print "F10"
             gtk.main_quit()
             return gtk.TRUE
         return gtk.FALSE
+
+    def progress_cb(self, info, data):
+        print "Bytes copied %d/%d" % (info.bytes_copied, info.bytes_total)
+        return 1
+    
+    def __copy(self, s_uri, d_uri):
+        print "from "+str(s_uri)
+        print "to "+str(d_uri)
+        try:
+            gnome.vfs.xfer_uri(s_uri, d_uri,
+                               gnome.vfs.XFER_DEFAULT,
+                               gnome.vfs.XFER_ERROR_ACTION_SKIP,
+                               gnome.vfs.XFER_OVERWRITE_ACTION_ABORT,
+                               self.progress_cb, 0)
+        except gnome.vfs.InterruptedError:
+            print "Cannot copy: " + str(gnome.vfs.InterruptedError)
+        pass
 
     def __init__(self):
         #self.gnomeApp = gnome.ui.GnomeApp(self, 'pygnome-hello-world', 'pygnome_hello')
@@ -386,7 +492,8 @@ class Fc:
         self.switch_shell_panels = 0
         self.current = LEFT
         
-        font_name = "-misc-fixed-medium-r-normal--20-200-75-75-c-100-*-*"
+        #font_name = "-misc-fixed-medium-r-normal--20-200-75-75-c-100-*-*"
+        font_name = "fixed 12"
         xml = gtk.glade.XML('fc.glade')
         app = xml.get_widget('app')
         self.vbox = xml.get_widget('vbox')
@@ -406,22 +513,22 @@ class Fc:
         self.hbox = gtk.HBox()
         self.hbox.show()
 
-        term = gnome.zvt.Term(80, 25)
-        term.set_scrollback(50)
-        term.set_font_name(font_name);
-        term.connect("child_died", self.child_died_event)
+        term = vte.Terminal()
+        term.set_scrollback_lines(50)
+        term.set_font_from_string(font_name);
+        term.connect("child-exited", self.child_died_event)
         self.hbox.pack_start(term)
         term.show()
 
         self.vbox.show()
 
-        charwidth = term.charwidth
-        charheight = term.charheight
+        #charwidth = term.charwidth
+        #charheight = term.charheight
 
-        app.set_geometry_hints(geometry_widget=term,
-                            min_width=2*charwidth, min_height=2*charheight,
-                            base_width=charwidth,  base_height=charheight,
-                            width_inc=charwidth,   height_inc=charheight)
+        #app.set_geometry_hints(geometry_widget=term,
+        #                    min_width=2*charwidth, min_height=2*charheight,
+        #                    base_width=charwidth,  base_height=charheight,
+        #                    width_inc=charwidth,   height_inc=charheight)
 
         self.dir_cache = {}
 
@@ -429,23 +536,27 @@ class Fc:
         self.panel.append(Panel(xml.get_widget('tv_left'),
                                 xml.get_widget('cmb_left'),
                                 xml.get_widget('lbl_left'),
-                                self.dir_cache))
+                                self.dir_cache, xml))
         self.panel.append(Panel(xml.get_widget('tv_right'),
                                 xml.get_widget('cmb_right'),
                                 xml.get_widget('lbl_right'),
-                                self.dir_cache))
+                                self.dir_cache, xml))
 
 
         app.show()
         self.panel[self.current].tv.grab_focus()
 
-        pid = term.forkpty()
-        if pid == -1:
-            print "Couldn't fork"
-            sys.exit(1)
-        if pid == 0:
-            os.execv('/bin/bash', ['/bin/bash'])
-            #os.execv('/usr/bin/env', ['/usr/bin/env', 'python'])
+        self.panel_curr = self.panel[self.current]
+        self.panel_other = self.panel[1 - self.current]
+
+        pid = term.fork_command()
+        #pid = term.fork_command("/bin/bash")
+        #if pid == -1:
+        #    print "Couldn't fork"
+        #    sys.exit(1)
+        #if pid == 0:
+        #    os.execv('/bin/bash', ['/bin/bash'])
+        #    #os.execv('/usr/bin/env', ['/usr/bin/env', 'python'])
         gtk.main()
         pass
 
