@@ -18,11 +18,26 @@ import vte
 import bonobo
 import bonobo.ui
 
-import psyco
-psyco.full()
+import threading
+
+#import psyco
+#psyco.full()
 
 LEFT = 0
 RIGHT = 1
+
+GLADE_FILE = "fc.glade"
+
+def bytes_to_human(bytes):
+    if bytes < 1024:
+        return str(bytes)+" B"
+    elif bytes < 1024*1024:
+        return str(bytes/1024)+" kB"
+    elif bytes < 1024*1024*1024:
+        return str(bytes/1024/1024)+" MB"
+    else:
+        return str(bytes/1024/1024/1024)+" GB"
+    pass
 
 class stock_list(gtk.TreeView):
     def __init__(self):
@@ -65,7 +80,7 @@ class KeyBindings:
     KEY_DELETE        = 7    # F8
     KEY_OTHER1        = 8    # F9
     KEY_QUIT          = 9    # F10
-    KEY_DOWN_DIR      = 10   # Right, Enter
+    KEY_DOWN_DIR      = 10   # Right
     KEY_UP_DIR        = 11   # Left, Backspace
     KEY_SELECT        = 12   # Insert
     KEY_SWITCH_PANEL  = 13   # Tab
@@ -85,29 +100,39 @@ class KeyBindings:
         self.key_bindings[gtk.gdk.keyval_from_name("F9")] = self.KEY_OTHER1
         self.key_bindings[gtk.gdk.keyval_from_name("F10")] = self.KEY_QUIT
         self.key_bindings[gtk.gdk.keyval_from_name("Right")] = self.KEY_DOWN_DIR
-        self.key_bindings[gtk.gdk.keyval_from_name("Enter")] = self.KEY_DOWN_DIR
         self.key_bindings[gtk.gdk.keyval_from_name("Left")] = self.KEY_UP_DIR
         self.key_bindings[gtk.gdk.keyval_from_name("Backspace")] = self.KEY_UP_DIR
         self.key_bindings[gtk.gdk.keyval_from_name("Insert")] = self.KEY_SELECT
         self.key_bindings[gtk.gdk.keyval_from_name("Tab")] = self.KEY_SWITCH_PANEL
         pass
     
-    def def_proc_binding(self, key_action, procedure):
-        self.proc_bindings[key_action] = procedure
+    def def_proc_binding(self, key_action, key_func, chk_active_func):
+        if self.proc_bindings.has_key(key_action):
+            self.proc_bindings[key_action] = self.proc_bindings[key_action] + [(key_func, chk_active_func)]
+        else:
+            self.proc_bindings[key_action] = [(key_func, chk_active_func)]
         pass
      
     def process_key(self, key_val):
         if self.key_bindings.has_key(key_val):
             key_action = self.key_bindings[key_val]
             if self.proc_bindings.has_key(key_action):
-                proc = self.proc_bindings[key_action]
-                proc()
-                return True
+                for (key_func, chk_active_func) in self.proc_bindings[key_action]:
+                    if chk_active_func():
+                        key_func()
+                        return True
+                    pass
+                pass
             pass
         return False
     
     pass
 
+TV_CLMN_FILE_INFO = 0
+TV_CLMN_FILE = 1
+TV_CLMN_PIX = 3
+TV_CLMN_BG_SET = 4
+TV_CLMN_BG = 5
 class DirCacheEntry(gtk.ListStore):
     def __init__(self, dh, dir_uri):
         self.dh = dh
@@ -142,6 +167,7 @@ class DirCacheEntry(gtk.ListStore):
         if event_type == gnome.vfs.MONITOR_EVENT_CHANGED:
             pass
         elif event_type == gnome.vfs.MONITOR_EVENT_DELETED:
+            print "monitor: removed directory entry: %s" % str(info_uri)
             self.__remove(info_uri)
             self.sort()
         elif event_type == gnome.vfs.MONITOR_EVENT_STARTEXECUTING:
@@ -149,7 +175,11 @@ class DirCacheEntry(gtk.ListStore):
         elif event_type == gnome.vfs.MONITOR_EVENT_STOPEXECUTING:
             pass
         elif event_type == gnome.vfs.MONITOR_EVENT_CREATED:
-            fi = gnome.vfs.get_file_info(info_uri)
+            print "monitor: added directory entry: %s" % str(info_uri)
+            try:
+                fi = gnome.vfs.get_file_info(info_uri)
+            except gnome.vfs.NotFoundError:
+                return
             self.__append(fi)
             self.sort()
         elif event_type == gnome.vfs.MONITOR_EVENT_METADATA_CHANGED:
@@ -210,7 +240,66 @@ class DirCacheEntry(gtk.ListStore):
     def sort(self):
         gtk.ListStore.set_sort_column_id(self, 2, gtk.SORT_ASCENDING)
         pass
+
+class Dialog:
+    pass
+
+class CopyDialog(Dialog):
+    def __init__(self):
+        xml = gtk.glade.XML(GLADE_FILE, "dlg_cpy")
+        self.xml = xml
         
+        self.dlg_cpy = xml.get_widget('dlg_cpy')
+        self.lbl_cpy_src = xml.get_widget('lbl_cpy_src')
+        self.ent_cpy_dest = xml.get_widget('ent_cpy_dest')
+        pass
+
+    def run(self, file_list, dest_dir):
+        self.lbl_cpy_src.set_markup("<i>Copy</i> <b>"+file_list+"</b>   ")
+        self.ent_cpy_dest.set_text(dest_dir)
+        response = self.dlg_cpy.run()
+        self.dlg_cpy.hide()
+        if response != gtk.RESPONSE_OK:
+            return (False, None)
+        return (True, self.ent_cpy_dest.get_text())
+    pass
+
+class ProgressDialog(Dialog):
+    def __init__(self, title):
+        xml = gtk.glade.XML(GLADE_FILE, "dlg_prgrs")
+        self.xml = xml
+
+        self.dlg_prgrs = xml.get_widget('dlg_prgrs')
+        self.lbl_prgrs = xml.get_widget('lbl_prgrs')
+        self.prgrs_bar = xml.get_widget("prgrs_bar")
+        self.btn_prgrs_ok = xml.get_widget('btn_prgrs_ok')
+        self.btn_prgrs_cancel = xml.get_widget('btn_prgrs_cancel')
+        self.btn_prgrs_dock = xml.get_widget('btn_prgrs_dock')
+
+        self.dlg_prgrs.set_title(title)
+
+        self.step = 0.1
+        self.start = time.time()
+        pass
+
+    def run(self):
+        response = self.dlg_prgrs.run()
+        self.dlg_prgrs.hide()
+        if response == gtk.RESPONSE_CANCEL:
+            return False
+        elif response == gtk.RESPONSE_CLOSE:
+            return False
+        return True
+
+    def progress(self, progress, txt):
+        self.lbl_prgrs.set_text(txt)
+        self.prgrs_bar.set_fraction(progress)
+        pass
+
+    def completed(self):
+        self.btn_prgrs_ok.show()
+        self.btn_prgrs_cancel.hide()
+        pass        
 
 class Panel:
     def __init__(self, tv, cmb, lbl, dir_cache, xml, key_bindings):
@@ -223,6 +312,7 @@ class Panel:
         self.key_bindings = key_bindings
         self.bind_keys()
 
+        self.active = False
 
         self.appbar = xml.get_widget('appbar')
         self.dlg_mkdir = xml.get_widget('dlg_mkdir')
@@ -235,11 +325,13 @@ class Panel:
         self.curr_iter = None
 
         renderer = gtk.CellRendererPixbuf()
-        clmn = gtk.TreeViewColumn("Icon", renderer, pixbuf=3)
+        clmn = gtk.TreeViewColumn("Icon", renderer, pixbuf=TV_CLMN_PIX)
         self.tv.append_column(clmn)
         renderer = gtk.CellRendererText()
-        clmn = gtk.TreeViewColumn("Name", renderer, markup=1,
-                                  background_set=4, background=5)
+        clmn = gtk.TreeViewColumn("Name", renderer,
+                                  markup=TV_CLMN_FILE,
+                                  background_set=TV_CLMN_BG_SET,
+                                  background=TV_CLMN_BG)
         self.tv.append_column(clmn)
 
         self.tv.connect("cursor_changed", self.on_tv_cursor_changed)
@@ -253,20 +345,34 @@ class Panel:
         self.tv.show()
         pass
 
+    def chk_active(self):
+        return self.active
+
+    def activate(self):
+        self.active = True
+        self.tv.grab_focus()
+        pass
+
+    def deactivate(self):
+        self.active = False
+        pass
+    
     def bind_keys(self):
-        self.key_bindings.def_proc_binding(KeyBindings.KEY_UP_DIR, self.act_chdir_up)
-        self.key_bindings.def_proc_binding(KeyBindings.KEY_DOWN_DIR, self.act_chdir_down)
-        self.key_bindings.def_proc_binding(KeyBindings.KEY_EDIT_NAME, self.act_edit_name)
-        self.key_bindings.def_proc_binding(KeyBindings.KEY_VIEW, self.act_view_file)
-        self.key_bindings.def_proc_binding(KeyBindings.KEY_MKDIR, self.act_mkdir)
-        self.key_bindings.def_proc_binding(KeyBindings.KEY_DELETE, self.act_delete)
-        self.key_bindings.def_proc_binding(KeyBindings.KEY_SELECT,  self.act_select)
+        self.key_bindings.def_proc_binding(KeyBindings.KEY_UP_DIR, self.act_chdir_up, self.chk_active)
+        self.key_bindings.def_proc_binding(KeyBindings.KEY_DOWN_DIR, self.act_chdir_down, self.chk_active)
+        self.key_bindings.def_proc_binding(KeyBindings.KEY_EDIT_NAME, self.act_edit_name, self.chk_active)
+        self.key_bindings.def_proc_binding(KeyBindings.KEY_VIEW, self.act_view_file, self.chk_active)
+        self.key_bindings.def_proc_binding(KeyBindings.KEY_MKDIR, self.act_mkdir, self.chk_active)
+        self.key_bindings.def_proc_binding(KeyBindings.KEY_DELETE, self.act_delete, self.chk_active)
+        self.key_bindings.def_proc_binding(KeyBindings.KEY_SELECT,  self.act_select, self.chk_active)
         pass
 
     def act_view_file(self):
+        print "ACT: View"
         model = self.model
         iter = model.get_iter(self.curr_path)
-        fi = model.get_value(iter, 0)
+        fi = model.get_value(iter, TV_CLMN_FILE_INFO)
+        print "file "+fi.name
         uri = model.dir_uri.append_path(fi.name)
         print uri
         uic = bonobo.ui.Container()
@@ -282,29 +388,36 @@ class Panel:
         pass
     
     def act_edit_name(self):
+        print "ACT: Edit name"
         self.tv.set_cursor(self.curr_path, start_editing=gtk.TRUE)
         pass
 
     def act_select(self):
-        print "Insert"
-        bg_set = not self.model.get_value(self.curr_iter, 4)
-        self.model.set_value(self.curr_iter, 4, bg_set)
-        self.tv.set_cursor(self.curr_path[0] + 1)
+        #print "ACT: Select"
+        bg_set = not self.model.get_value(self.curr_iter, TV_CLMN_BG_SET)
+        self.model.set_value(self.curr_iter, TV_CLMN_BG_SET, bg_set)
+        try:
+            self.tv.set_cursor(self.curr_path[0] + 1)
+        except TypeError:
+            pass
         pass
 
     def act_chdir_up(self):
+        print "ACT: Chdir up"
         dir = str(self.model.dir_uri).strip("/").split("/")[-1]
         self.__load_list(self.model.dir_uri.append_path(".."))
         self.__goto_entry(dir)
         pass
 
     def act_chdir_down(self):
-        fi = self.model.get_value(self.curr_iter, 0)
+        print "ACT: Chdir down"
+        fi = self.model.get_value(self.curr_iter, TV_CLMN_FILE_INFO)
         self.__load_list(self.model.dir_uri.append_path(fi.name))
         self.__goto_entry("..")
         pass
 
     def act_mkdir(self):
+        print "ACT: Mkdir"
         response = self.dlg_mkdir.run()
         self.dlg_mkdir.hide()
         if response != gtk.RESPONSE_OK:
@@ -314,12 +427,13 @@ class Panel:
         if new_dir == "":
             return
         new_dir_uri = self.model.dir_uri.append_path(new_dir)
-        gnome.vfs.make_directory(new_dir_uri, 0644)
+        gnome.vfs.make_directory(new_dir_uri, 0755)
         print new_dir_uri
         pass
 
-    def act_delete(self, uri):
-        uri, fname = self.panel_curr.get_selected_entry()
+    def act_delete(self):
+        print "ACT: Delete"
+        uri, fname = self.get_selected_entry()
         self.lbl_cpy_src.set_markup("<i>Copy</i> <b>"+str(s_uri)+"</b>   ")
         self.ent_cpy_dest.set_text(str(d_uri))
         response = self.dlg_cpy.run()
@@ -339,17 +453,17 @@ class Panel:
             pass
         self.dlg_prgrs.set_title("Deleting")
         response = self.dlg_prgrs.run()
-        if response == gtk.RESPONSE_CANCEL:
+        if not ok:
             print "Cancel"
-        elif response == gtk.RESPONSE_CLOSE:
-            print "Dock"
             pass
         pass
     
     def on_tv_cursor_changed(self, widget):
-        (self.curr_path, column) = self.tv.get_cursor()        
+        (self.curr_path, column) = self.tv.get_cursor()
+        if self.curr_path == None:
+            return
         self.curr_iter = self.model.get_iter(self.curr_path)
-        fi = self.model.get_value(self.curr_iter, 0)
+        fi = self.model.get_value(self.curr_iter, TV_CLMN_FILE_INFO)
 
         #name
         name = "<b>"+fi.name+"</b>"
@@ -396,15 +510,7 @@ class Panel:
 
         #determine size
         if fi.valid_fields & gnome.vfs.FILE_INFO_FIELDS_SIZE:
-            if fi.size < 1024:
-                size = str(fi.size)+"B"
-            elif fi.size < 1024*1024:
-                size = str(fi.size/1024)+"kB"
-            elif fi.size < 1024*1024*1024:
-                size = str(fi.size/1024/1024)+"MB"
-            else:
-                size = str(fi.size/1024/1024/1024)+"GB"
-                pass
+            size = bytes_to_human(fi.size)
             pass
         else:
             size = ""
@@ -461,13 +567,12 @@ class Panel:
         listitem.show()        
         self.cmb.entry.set_text(str(dir_uri))
         
-
         #model.set_sort_column_id(1, gtk.SORT_ASCENDING)
         self.tv.show()
         pass
 
     def __fe_goto_entry(self, model, path, iter, dir):
-        d = model.get_value(iter, 1)
+        d = model.get_value(iter, TV_CLMN_FILE)
         if len(d) < 9:
             return gtk.FALSE
         if d[4:-4] == dir:
@@ -484,13 +589,14 @@ class Panel:
     def __activate(self, path):
         model = self.model
         iter = model.get_iter(path)
-        fi = model.get_value(iter, 0)
+        fi = model.get_value(iter, TV_CLMN_FILE_INFO)
         uri = model.dir_uri.append_path(fi.name)
 
         if fi.valid_fields & gnome.vfs.FILE_INFO_FIELDS_TYPE == 0:
             return
 
         if fi.type == gnome.vfs.FILE_TYPE_DIRECTORY:
+            print uri
             self.__load_list(uri)
             self.__goto_entry("..")
         elif fi.type == gnome.vfs.FILE_TYPE_REGULAR:
@@ -502,11 +608,22 @@ class Panel:
         pass
 
     def get_selected_entry(self):
-        fi = self.model.get_value(self.curr_iter, 0)
+        fi = self.model.get_value(self.curr_iter, TV_CLMN_FILE_INFO)
         return self.model.dir_uri.append_path(fi.name), fi.name
 
     def get_curr_dir(self):
         return self.model.dir_uri
+
+class Thr(threading.Thread):
+    def __init__(self, func, args):
+        threading.Thread.__init__(self)
+        self.func = func
+        self.args = args
+        pass
+
+    def run(self):
+        self.func(*self.args)
+        pass
 
 class Fc:
 
@@ -536,29 +653,109 @@ class Fc:
             return gtk.TRUE
         return gtk.FALSE
 
+    def chk_active(self):
+        return True
+
     def bind_keys(self):
-        self.key_bindings.def_proc_binding(KeyBindings.KEY_SWITCH_PANEL, self.act_switch_panel)
-        self.key_bindings.def_proc_binding(KeyBindings.KEY_COPY, self.act_copy)
-        self.key_bindings.def_proc_binding(KeyBindings.KEY_QUIT, self.act_quit)
+        self.key_bindings.def_proc_binding(KeyBindings.KEY_SWITCH_PANEL, self.act_switch_panel, self.chk_active)
+        self.key_bindings.def_proc_binding(KeyBindings.KEY_COPY, self.act_copy, self.chk_active)
+        self.key_bindings.def_proc_binding(KeyBindings.KEY_QUIT, self.act_quit, self.chk_active)
         pass
 
     def act_switch_panel(self):
+        #print "ACT: Switch panels"
         self.current = 1 - self.current
         self.panel_other = self.panel_curr
+        self.panel_other.deactivate()
         self.panel_curr = self.panel[self.current]
-        self.panel_curr.tv.grab_focus()
+        self.panel_curr.activate()
 
     def act_quit(self):
+        print "ACT: Quit"
         gtk.main_quit()
         pass
 
-    def progress_cb(self, info, data):
-        prgrs = "Bytes copied %d/%d" % (info.bytes_copied, info.bytes_total)
-        self.lbl_dlg1.set_text(prgrs)
-        print prgrs
+    def progress_cb(self, info, dlg):
+        #print "status: %d" % info.status
+
+        if info.status == gnome.vfs.XFER_PROGRESS_STATUS_VFSERROR:
+            print "Error"
+            return 0
+
+        #print "phase: %d" % info.phase
+
+        if info.phase == gnome.vfs.XFER_PHASE_COPYING:
+            progress = info.total_bytes_copied / float(info.bytes_total)
+            if progress > dlg.step or progress == 1:
+                if progress == 1:
+                    stop = time.time()
+                    elapsed = stop - dlg.start
+                    speed = info.total_bytes_copied / elapsed
+                    txt = "Copied %s in %f seconds (%s/s)" % (bytes_to_human(info.total_bytes_copied),
+                                                              elapsed,
+                                                              bytes_to_human(speed))
+                else:
+                    txt = "Copied %s/%s %d%%" % (bytes_to_human(info.total_bytes_copied),
+                                                 bytes_to_human(info.bytes_total),
+                                                 int(progress*100))
+                    pass
+                gtk.gdk.threads_enter()
+                dlg.progress(progress, txt)
+                gtk.gdk.threads_leave()
+                dlg.step = dlg.step + 0.1
+                pass
+            pass
+        elif info.phase == gnome.vfs.XFER_PHASE_COMPLETED:
+            gtk.gdk.threads_enter()
+            dlg.completed()
+            gtk.gdk.threads_leave()
+            pass
+        
         return 1
-    
+
+    def __xfer_uri(self, s_uri, d_uri, opt, err_mode, ovwr_mode, cb, arg):
+        print "start xfer_uri 1"
+        try:
+            print "start xfer_uri"
+            gnome.vfs.xfer_uri(s_uri, d_uri, opt, err_mode, ovwr_mode,
+                               cb, arg)
+            print "xfer_uri done"
+        except gnome.vfs.InterruptedError:
+            print "Cannot copy: " + str(gnome.vfs.InterruptedError)
+            pass
+        pass
+
     def act_copy(self):
+        print "ACT: Copy"
+        s_uri, fname = self.panel_curr.get_selected_entry()
+        d_uri = self.panel_other.get_curr_dir().append_path(fname)
+
+        dlg = CopyDialog()
+        (success, dest) = dlg.run(str(s_uri), str(d_uri))
+        if not success:
+            return
+
+        print "%s %s" % (str(s_uri), str(gnome.vfs.URI(dest)))
+
+        dlg = ProgressDialog("Copying")
+        t = Thr(self.__xfer_uri,
+                [s_uri, gnome.vfs.URI(dest),
+                 gnome.vfs.XFER_DEFAULT,
+                 gnome.vfs.XFER_ERROR_MODE_ABORT,
+                 gnome.vfs.XFER_OVERWRITE_MODE_SKIP,
+                 self.progress_cb, dlg])
+        t.start()
+        
+        ok = dlg.run()
+        if not ok:
+            print "Cancel"
+            pass
+        t.join()
+        
+        pass
+    
+    def act_copy2(self):
+        print "ACT: Copy"
         s_uri, fname = self.panel_curr.get_selected_entry()
         d_uri = self.panel_other.get_curr_dir().append_path(fname)
 
@@ -603,16 +800,12 @@ class Fc:
         
         #font_name = "-misc-fixed-medium-r-normal--20-200-75-75-c-100-*-*"
         font_name = "fixed 12"
-        xml = gtk.glade.XML('fc.glade')
+        xml = gtk.glade.XML(GLADE_FILE)
+        self.xml= xml
         app = xml.get_widget('app')
         self.vbox = xml.get_widget('vbox')
         self.vbox1 = xml.get_widget('vbox1')
         self.appbar = xml.get_widget('appbar')
-        self.dlg_cpy = xml.get_widget('dlg_cpy')
-        self.lbl_cpy_src = xml.get_widget('lbl_cpy_src')
-        self.ent_cpy_dest = xml.get_widget('ent_cpy_dest')
-        self.dlg_prgrs = xml.get_widget('dlg_prgrs')
-        self.lbl_dlg1 = xml.get_widget('lbl_dlg1')
         
         xml.signal_autoconnect({
             'on_win_destroy': gtk.main_quit,
@@ -662,13 +855,14 @@ class Fc:
                                 self.key_bindings))
 
 
-        app.show()
-        self.panel[self.current].tv.grab_focus()
+        self.panel[self.current].activate()
 
         self.panel_curr = self.panel[self.current]
         self.panel_other = self.panel[1 - self.current]
 
-        pid = term.fork_command()
+        app.show()
+
+        #pid = term.fork_command()
         #pid = term.fork_command("/bin/bash")
         #if pid == -1:
         #    print "Couldn't fork"
@@ -676,6 +870,8 @@ class Fc:
         #if pid == 0:
         #    os.execv('/bin/bash', ['/bin/bash'])
         #    #os.execv('/usr/bin/env', ['/usr/bin/env', 'python'])
+
+        gtk.gdk.threads_init()
         gtk.main()
         pass
 
