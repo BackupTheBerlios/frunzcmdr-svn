@@ -84,7 +84,7 @@ class Panel:
 
 #        self.model = gtk.TreeStore(gnome.vfs.URI, gnome.vfs.FileInfo, gobject.TYPE_STRING)
         self.model = gtk.TreeStore(gobject.TYPE_PYOBJECT, gobject.TYPE_PYOBJECT,
-                              gobject.TYPE_STRING, gtk.gdk.Pixbuf)
+                              gobject.TYPE_STRING, gtk.gdk.Pixbuf, 'gboolean', str)
         #model.set_sort_func(1, self.__sort_panel, None)
         self.tv.set_model(self.model)
         self.sel = self.tv.get_selection()
@@ -98,7 +98,8 @@ class Panel:
         clmn = gtk.TreeViewColumn("Icon", renderer, pixbuf=3)
         self.tv.append_column(clmn)
         renderer = gtk.CellRendererText()
-        clmn = gtk.TreeViewColumn("Name", renderer, markup=2)
+        clmn = gtk.TreeViewColumn("Name", renderer, markup=2,
+                                  background_set=4, background=5)
         self.tv.append_column(clmn)
 
         self.sel.set_mode(gtk.SELECTION_NONE)
@@ -146,6 +147,12 @@ class Panel:
             return gtk.TRUE
         elif event.keyval == gtk.gdk.keyval_from_name("F9"):
             print "F9"
+            return gtk.TRUE
+        elif event.keyval == gtk.gdk.keyval_from_name("Insert"):
+            print "Insert"
+            bg_set = not self.model.get_value(self.curr_iter, 4)
+            self.model.set_value(self.curr_iter, 4, bg_set)
+            self.tv.set_cursor(self.curr_path[0] + 1)
             return gtk.TRUE
         return gtk.FALSE
 
@@ -199,6 +206,8 @@ class Panel:
         iter = model.insert_before(None, None)
         model.set_value(iter, 0, uri)
         model.set_value(iter, 1, fi)
+        model.set_value(iter, 4, False)
+        model.set_value(iter, 5, "LightBlue")
         name = fi.name.replace("&", "&amp;")
         if fi.type == gnome.vfs.FILE_TYPE_REGULAR:
             model.set_value(iter, 2, name)
@@ -304,8 +313,7 @@ class Panel:
         pass
 
     def __chdir_down(self):
-        iter = self.model.get_iter(self.curr_path)
-        self.curr_uri = self.model.get_value(iter, 0)
+        self.curr_uri = self.model.get_value(self.curr_iter, 0)
         self.__load_list()
         self.__goto_entry("..")
         pass

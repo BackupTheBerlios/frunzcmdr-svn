@@ -1,0 +1,2 @@
+
+* Change DirCacheEntry to ListStore and attach it to TreeView.
